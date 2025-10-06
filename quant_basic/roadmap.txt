@@ -1,0 +1,17 @@
+quant_basic/
+│   main.py                    # 主程序，用于运行策略
+│   requirements.txt           # 项目依赖
+│
+├───core/                      # 核心框架模块
+│   │   data_manager.py        # 数据管理模块
+│   │   strategy.py            # 策略基类
+│   │   backtest.py            # 回测引擎
+│   │   performance.py         # 绩效分析模块
+│
+├───strategies/                # 策略集合
+│   │   buy_and_hold.py        # 买入持有策略
+│   │   moving_average_cross.py # 双均线交叉策略
+│
+└───utils/
+        config.py              # 配置文件
+        logger.py              # 日志配置

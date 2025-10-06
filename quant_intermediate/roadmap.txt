@@ -1,0 +1,20 @@
+quant_project/
+│   main.py                           # 主程序
+│   requirements.txt                  
+│
+├───core/                           
+│   │   data_manager.py              # 数据管理器
+│   │   strategy.py                  # 策略基类
+│   │   backtest.py                  # 回测引擎
+│   │   performance.py               # 绩效分析
+│   │   factor_calculator.py         # 因子计算器
+│   │   portfolio_optimizer.py       # 组合优化器
+│
+├───strategies/                      
+│   │   buy_and_hold.py             
+│   │   moving_average_cross.py     
+│   │   multi_factor_strategy.py    # 多因子策略
+│
+└───utils/
+        config.py                    # 配置
+        logger.py                    

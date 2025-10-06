@@ -1,0 +1,27 @@
+@"
+# Python
+__pycache__/
+*.py[cod]
+*.ipynb_checkpoints/
+.venv/
+.env
+.env.*
+
+# IDEs / OS
+.vscode/
+.idea/
+.DS_Store
+
+# Data & outputs (keep large/derived out of git)
+data/
+outputs/
+logs/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+"@ > .gitignore

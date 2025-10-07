@@ -1,8 +1,8 @@
 # Unified Configuration Management
 class Config:
     # Data configuration
-    START_DATE = "2018-01-01"  # Shorter period for faster testing
-    END_DATE = "2023-12-31"
+    START_DATE = "2023-01-01"  # Shorter period for faster testing
+    END_DATE = "2025-9-30"
 
     # Backtest configuration
     INITIAL_CASH = 1000000  # Initial capital 1 million

@@ -42,11 +42,20 @@ def main():
             MeanReversionStrategy(lookback_period=20, entry_z=1.5, exit_z=0.5)
             .set_data(single_stock_data),
 
-            # Phase 3: Machine learning
-            MLStrategy(model_type='random_forest', lookforward_days=5)
-            .set_data(single_stock_data),
-            EnsembleMLStrategy(lookforward_days=5)
-            .set_data(single_stock_data)
+            # Phase 3: Machine learning - 调整参数增加交易频率
+            MLStrategy(
+                model_type='random_forest',
+                lookforward_days=5,
+                retrain_freq=21,  # 从63天改为21天（月度）
+                min_train_size=0.2  # 降低最小训练集要求
+            ).set_data(single_stock_data),
+
+            EnsembleMLStrategy(
+                lookforward_days=5,
+                retrain_freq=21,
+                min_train_size=0.2,
+                voting_threshold=0.55  # 降低集成投票阈值
+            ).set_data(single_stock_data)
         ]
 
         # 3. Run backtests
@@ -61,6 +70,10 @@ def main():
                 result_data = backtest_engine.run_backtest(strategy)
                 print(f"✓ {strategy.name} backtest successful")
 
+                # 对于ML策略，显示训练摘要
+                if 'ML' in strategy.name and hasattr(strategy, 'training_history'):
+                    print(f"ML训练摘要: {len(strategy.training_history)} 次训练")
+
             except Exception as e:
                 print(f"✗ {strategy.name} backtest failed: {e}")
                 import traceback
@@ -71,6 +84,12 @@ def main():
             print("\n4. Performance analysis and chart generation...")
             plot_results(backtest_engine)
             print_advanced_results(backtest_engine)
+
+            # 生成ML训练报告
+            print("\n5. ML策略详细分析...")
+            for strategy_name in backtest_engine.results.keys():
+                if 'ML' in strategy_name:
+                    backtest_engine.generate_ml_training_report(strategy_name)
         else:
             print("No successful backtest results to display")
 
@@ -210,6 +229,16 @@ def print_advanced_results(backtest_engine):
         print(f"  Calmar Ratio:     {calmar_ratio:>8.2f}")
         print(f"  Win Rate:         {win_rate:>8.2%}")
         print(f"  Profit Factor:    {profit_factor:>8.2f}")
+
+        # 添加ML特定分析
+        if 'ML' in strategy_name:
+            # 计算ML特定指标
+            ml_metrics = backtest_engine.calculate_ml_specific_metrics(strategy_name)
+            if ml_metrics:
+                print(f"  ML特定指标:")
+                print(f"  换手率:        {ml_metrics.get('turnover_rate', 0):>8.2%}")
+                print(f"  平均持仓周期:  {ml_metrics.get('avg_holding_period', 0):>8.1f}天")
+
         print("-" * 80)
 
     # Print summary table

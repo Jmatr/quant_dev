@@ -6,16 +6,18 @@ from core.data_manager import data_manager
 
 
 class PairTradingStrategy(Strategy):
-    """Statistical Arbitrage Pair Trading Strategy"""
+    """Statistical Arbitrage Pair Trading Strategy with Walk-Forward"""
 
-    def __init__(self, stock_pairs: list = None, entry_z: float = 2.0, exit_z: float = 0.5):
+    def __init__(self, stock_pairs: list = None, entry_z: float = 2.0, exit_z: float = 0.5,
+                 lookback: int = 60, min_lookback: int = 30):
         super().__init__("Pair Trading Strategy")
         self.stock_pairs = stock_pairs or []
         self.entry_z = entry_z
         self.exit_z = exit_z
-        self.lookback = 20
+        self.lookback = lookback  # 用于计算对冲比率
+        self.min_lookback = min_lookback  # 最小数据量
         self.pair_data = {}
-        self.current_positions = {}
+        self.training_history = []
 
     def prepare_data(self):
         """Prepare data for pair trading"""
@@ -68,8 +70,26 @@ class PairTradingStrategy(Strategy):
 
         self.stock_pairs = selected_pairs
 
+    def _calculate_rolling_hedge_ratio(self, series1, series2, window=60):
+        """滚动计算对冲比率，避免数据泄露"""
+        hedge_ratios = pd.Series(index=series1.index, dtype=float)
+
+        for i in range(window, len(series1)):
+            # 只用历史数据计算对冲比率
+            hist_series1 = series1.iloc[i - window:i]
+            hist_series2 = series2.iloc[i - window:i]
+
+            if len(hist_series1) >= window // 2:  # 至少有一半数据
+                try:
+                    hedge_ratio = np.polyfit(hist_series1, hist_series2, 1)[0]
+                    hedge_ratios.iloc[i] = hedge_ratio
+                except:
+                    hedge_ratios.iloc[i] = np.nan
+
+        return hedge_ratios.ffill()
+
     def generate_signals(self):
-        """Generate pair trading signals"""
+        """Generate pair trading signals with Walk-Forward"""
         if not self.stock_pairs:
             raise ValueError("No stock pairs defined")
 
@@ -77,56 +97,99 @@ class PairTradingStrategy(Strategy):
         signals = pd.Series(0, index=all_dates)
         self.pair_signals = {}
 
+        print(f"Generating pair trading signals with Walk-Forward (lookback: {self.lookback})")
+
         for pair in self.stock_pairs:
             stock1, stock2 = pair
             if stock1 not in self.all_data or stock2 not in self.all_data:
                 continue
 
-            # Calculate spread and z-score
+            # Get price series
             series1 = self.all_data[stock1]['close']
             series2 = self.all_data[stock2]['close']
 
             # Align series
             common_dates = series1.index.intersection(series2.index)
-            series1 = series1.loc[common_dates]
-            series2 = series2.loc[common_dates]
+            series1_aligned = series1.loc[common_dates]
+            series2_aligned = series2.loc[common_dates]
 
-            # Calculate hedge ratio (simplified)
-            hedge_ratio = np.polyfit(series1, series2, 1)[0]
-            spread = statistical_arbitrage.calculate_spread(series1, series2, hedge_ratio)
-            zscore = statistical_arbitrage.calculate_zscore(spread, self.lookback)
+            # 滚动计算对冲比率（避免数据泄露）
+            hedge_ratios = self._calculate_rolling_hedge_ratio(
+                series1_aligned, series2_aligned, self.lookback
+            )
 
-            # Generate signals for this pair
+            # 计算价差和z-score
+            spread = series2_aligned - hedge_ratios * series1_aligned
+
+            # 滚动计算z-score
+            zscore = pd.Series(index=spread.index, dtype=float)
+            for i in range(self.lookback, len(spread)):
+                hist_spread = spread.iloc[i - self.lookback:i]
+                if len(hist_spread) >= self.min_lookback:
+                    mean = hist_spread.mean()
+                    std = hist_spread.std()
+                    if std > 0:
+                        zscore.iloc[i] = (spread.iloc[i] - mean) / std
+
+            zscore = zscore.ffill()
+
+            # 生成信号
             pair_signals = pd.Series(0, index=common_dates)
 
-            # Long spread (buy stock1, sell stock2) when zscore < -entry_z
-            pair_signals[zscore < -self.entry_z] = 1
-            # Short spread (sell stock1, buy stock2) when zscore > entry_z
-            pair_signals[zscore > self.entry_z] = -1
-            # Exit when zscore crosses exit_z
-            pair_signals[(zscore >= -self.exit_z) & (zscore <= self.exit_z)] = 0
+            # Long spread (buy stock2, sell stock1) when spread is low
+            pair_signals[(zscore < -self.entry_z) & (zscore.notna())] = 1
+            # Short spread (sell stock2, buy stock1) when spread is high
+            pair_signals[(zscore > self.entry_z) & (zscore.notna())] = -1
+            # Exit when spread returns to normal
+            pair_signals[(zscore >= -self.exit_z) & (zscore <= self.exit_z) & (zscore.notna())] = 0
 
             self.pair_signals[pair] = {
                 'signals': pair_signals,
                 'zscore': zscore,
                 'spread': spread,
-                'hedge_ratio': hedge_ratio
+                'hedge_ratios': hedge_ratios
             }
 
-        # Combine signals from all pairs (simple approach: use first pair's signals)
-        if self.pair_signals:
-            first_pair = list(self.pair_signals.keys())[0]
-            combined_signals = self.pair_signals[first_pair]['signals']
-            signals = combined_signals.reindex(all_dates, fill_value=0)
+            print(f"Pair {stock1}-{stock2}: {pair_signals.abs().sum()} trading signals")
 
-            print(f"Pair Trading: {len(self.pair_signals)} pairs, signals range: {signals.min()} to {signals.max()}")
+        # 智能组合多个对的信号
+        signals = self._combine_pair_signals(all_dates)
+
+        # 避免前视偏差
+        signals = signals.shift(1).fillna(0)
 
         self.signals = signals
+        print(f"Final combined signals: Long: {(signals == 1).sum()}, Short: {(signals == -1).sum()}")
+
         return self
+
+    def _combine_pair_signals(self, all_dates):
+        """智能组合多个对的信号"""
+        if not self.pair_signals:
+            return pd.Series(0, index=all_dates)
+
+        # 方法1: 投票机制
+        all_signals = pd.DataFrame(index=all_dates)
+
+        for pair, data in self.pair_signals.items():
+            signal_name = f"{pair[0]}_{pair[1]}"
+            aligned_signals = data['signals'].reindex(all_dates, fill_value=0)
+            all_signals[signal_name] = aligned_signals
+
+        # 多数投票
+        combined_signals = all_signals.sum(axis=1)
+        final_signals = pd.Series(0, index=all_dates)
+
+        # 设置阈值：至少一半的配对同意
+        threshold = len(self.pair_signals) // 2
+        final_signals[combined_signals > threshold] = 1
+        final_signals[combined_signals < -threshold] = -1
+
+        return final_signals
 
 
 class MeanReversionStrategy(Strategy):
-    """Mean Reversion Strategy based on Z-score"""
+    """Mean Reversion Strategy with Walk-Forward Z-score"""
 
     def __init__(self, lookback_period: int = 20, entry_z: float = 2.0, exit_z: float = 0.5):
         super().__init__(f"Mean Reversion ({lookback_period}d)")
@@ -135,28 +198,35 @@ class MeanReversionStrategy(Strategy):
         self.exit_z = exit_z
 
     def generate_signals(self):
-        """Generate mean reversion signals"""
+        """Generate mean reversion signals with proper rolling calculation"""
         if self.data is None:
             raise ValueError("No data available")
 
-        # Calculate z-score of price
         price = self.data['close']
-        rolling_mean = price.rolling(window=self.lookback_period).mean()
-        rolling_std = price.rolling(window=self.lookback_period).std()
-        zscore = (price - rolling_mean) / rolling_std
+
+        # 滚动计算z-score（避免数据泄露）
+        zscore = pd.Series(index=price.index, dtype=float)
+
+        for i in range(self.lookback_period, len(price)):
+            # 只用历史数据计算
+            hist_prices = price.iloc[i - self.lookback_period:i]
+            mean = hist_prices.mean()
+            std = hist_prices.std()
+
+            if std > 0:
+                zscore.iloc[i] = (price.iloc[i] - mean) / std
+
+        zscore = zscore.ffill()
 
         # Generate signals
         signals = pd.Series(0, index=self.data.index)
 
-        # Buy when price is significantly below mean (oversold)
-        signals[zscore < -self.entry_z] = 1
-        # Sell when price is significantly above mean (overbought)
-        signals[zscore > self.entry_z] = -1
-        # Exit when price returns to normal range
-        signals[(zscore >= -self.exit_z) & (zscore <= self.exit_z)] = 0
-
-        # Ensure we have enough data
-        signals.iloc[:self.lookback_period] = 0
+        # Buy when oversold
+        signals[(zscore < -self.entry_z) & (zscore.notna())] = 1
+        # Sell when overbought
+        signals[(zscore > self.entry_z) & (zscore.notna())] = -1
+        # Exit when returns to normal
+        signals[(zscore >= -self.exit_z) & (zscore <= self.exit_z) & (zscore.notna())] = 0
 
         # Shift to avoid look-ahead bias
         signals = signals.shift(1).fillna(0)

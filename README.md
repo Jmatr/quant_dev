@@ -136,19 +136,6 @@ class MyCustomStrategy(Strategy):
 
 ---
 
-## Strategy Performance
-_Backtest results on 2018–2023 A-share data:_
-
-| Strategy          | Total Return | Annual Return | Sharpe Ratio | Max Drawdown |
-|-------------------|-------------:|--------------:|-------------:|-------------:|
-| Buy & Hold        |      -11.53% |        -2.10% |        -0.07 |       -63.89%|
-| MA Crossover      |       16.48% |         2.67% |         0.12 |       -35.37%|
-| Multi-Factor      |       12.40% |         2.04% |         0.07 |       -55.85%|
-| Pair Trading      |      257.48% |        24.65% |         2.59 |        -1.72%|
-| ML Random Forest  |     1642.98% |        63.94% |         3.31 |       -10.10%|
-
-> **Note:** Results are illustrative; performance varies by configuration, universe, and period.
-
 ---
 
 ## Configuration

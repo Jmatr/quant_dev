@@ -13,17 +13,44 @@ class BacktestEngine:
         self.results = {}
 
     def run_backtest(self, strategy):
-        """Run backtest - Enhanced for portfolio strategies"""
-        if strategy.signals is None:
+        """Run backtest - Enhanced for portfolio strategies with ML support"""
+        # 更健壮的信号生成检查
+        try:
+            # 检查信号是否已生成且不为空
+            if (strategy.signals is None or
+                    len(strategy.signals) == 0 or
+                    strategy.signals.isna().all()):
+                print(f"Generating signals for {strategy.name}...")
+                strategy.prepare_data().generate_signals()
+
+            # 验证信号质量
+            signal_stats = self._analyze_signals(strategy.signals)
+            print(f"Signal stats for {strategy.name}: {signal_stats}")
+
+        except Exception as e:
+            print(f"Signal check failed for {strategy.name}: {e}")
+            # 强制重新生成信号
             strategy.prepare_data().generate_signals()
 
-        # Check if this is a portfolio strategy
+        # 检查是否支持组合策略
         is_portfolio_strategy = hasattr(strategy, 'portfolio_weights')
 
         if is_portfolio_strategy:
             return self._run_portfolio_backtest(strategy)
         else:
             return self._run_single_stock_backtest(strategy)
+
+    def _analyze_signals(self, signals):
+        """分析信号质量"""
+        if signals is None or len(signals) == 0:
+            return "No signals"
+
+        total_signals = len(signals)
+        buy_signals = (signals == 1).sum()
+        sell_signals = (signals == -1).sum() if -1 in signals.values else 0
+        zero_signals = (signals == 0).sum()
+
+        return f"Total: {total_signals}, Buy: {buy_signals}, Sell: {sell_signals}, Zero: {zero_signals}"
 
     def _run_single_stock_backtest(self, strategy):
         """Run backtest for single stock strategy with realistic execution"""
@@ -282,6 +309,78 @@ class BacktestEngine:
                 })
 
         return trades
+
+    def generate_ml_training_report(self, strategy_name):
+        """生成ML策略的Walk-Forward训练报告"""
+        if strategy_name not in self.results:
+            return None
+
+        result = self.results[strategy_name]
+        strategy = result['strategy']
+
+        if hasattr(strategy, 'training_history') and strategy.training_history:
+            training_df = pd.DataFrame(strategy.training_history)
+            print(f"\n{'=' * 60}")
+            print(f"{strategy_name} - Walk-Forward训练摘要")
+            print(f"{'=' * 60}")
+            print(f"总训练次数: {len(training_df)}")
+            print(f"训练时间范围: {training_df['train_end_date'].min()} 到 {training_df['train_end_date'].max()}")
+            if 'train_size' in training_df.columns:
+                print(f"平均训练集大小: {training_df['train_size'].mean():.0f} 样本")
+
+            # 显示最近几次训练
+            if len(training_df) > 0:
+                print(f"\n最近5次训练:")
+                print(training_df.tail().to_string(index=False))
+
+            return training_df
+        else:
+            print(f"{strategy_name} - 无Walk-Forward训练历史")
+            return None
+
+    def calculate_ml_specific_metrics(self, strategy_name):
+        """计算ML策略特有指标"""
+        if strategy_name not in self.results:
+            return None
+
+        result = self.results[strategy_name]
+        data = result['data']
+
+        metrics = {}
+
+        # 信号稳定性 - 修复换手率计算
+        if 'position' in data.columns:
+            positions = data['position']
+            if len(positions) > 0:
+                # 正确的换手率计算
+                position_changes = positions.diff().fillna(0).abs()
+                avg_position = positions.abs().mean()
+                if avg_position > 0:
+                    metrics['turnover_rate'] = position_changes.sum() / avg_position / len(positions) * 252
+                else:
+                    metrics['turnover_rate'] = 0
+
+                metrics['avg_holding_period'] = self._calculate_avg_holding_period(positions)
+
+        return metrics
+
+    def _calculate_avg_holding_period(self, positions):
+        """计算平均持仓周期"""
+        if len(positions) == 0:
+            return 0
+
+        holding_periods = []
+        entry_day = None
+
+        for i, pos in enumerate(positions):
+            if pos > 0 and entry_day is None:  # 开仓
+                entry_day = i
+            elif pos == 0 and entry_day is not None:  # 平仓
+                holding_periods.append(i - entry_day)
+                entry_day = None
+
+        return np.mean(holding_periods) if holding_periods else 0
+
 
 
 # Enhanced configuration with execution parameters
